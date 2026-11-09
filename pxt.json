@@ -16,6 +16,7 @@
     "testFiles": [
         "test.ts"
     ],
+    "public": true,
     "targetVersions": {
         "target": "9.0.12",
         "targetId": "microbit"
