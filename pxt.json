@@ -1,5 +1,6 @@
 {
     "name": "rfid",
+    "version": "0.0.1",
     "description": "MakeCode bibliotek for å bruke en MFRC522 RFID module",
     "dependencies": {
         "core": "*",
