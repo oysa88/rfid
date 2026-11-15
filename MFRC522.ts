@@ -52,7 +52,7 @@ namespace RFID_RC522 {
         pins.digitalWritePin(DigitalPin.P16, 1)
     }
 
-    function readFromCard(): string {
+    function readFromCard(forventetID: number = 0): string {
         let [status, Type2] = Request(PICC_REQIDL)
         if (status != 0) {
             return null, null
@@ -65,6 +65,10 @@ namespace RFID_RC522 {
         }
 
         let id = getIDNum(uid)
+        if (forventetID != 0 && id != forventetID) {
+            serial.writeLine("RFID: en annen brikke svarte ved kontroll")
+            return ""
+        }
         TagSelect(uid)
         status = Authent(PICC_AUTHENT1A, 11, Key, uid)
         let data: NumberFormat.UInt8LE[] = []
@@ -75,6 +79,10 @@ namespace RFID_RC522 {
                 block = ReadRFID(BlockNum)
                 if (block) {
                     data = data.concat(block)
+                } else if (forventetID != 0) {
+                    Crypto1Stop()
+                    serial.writeLine("RFID: lesefeil på blokk " + BlockNum)
+                    return ""
                 }
             }
             if (data) {
@@ -95,43 +103,51 @@ namespace RFID_RC522 {
         return val
     }
 
-    function writeToCard(txt: string): number {
-        [status, Type2] = Request(PICC_REQIDL)
-
-        if (status != 0) {
-            return null, null
-        }
-        [status, uid] = AvoidColl()
-
-        if (status != 0) {
-            return null, null
+    function writeToCard(txt: string, kontroller: boolean = false): number {
+        let [kortStatus, kortType] = Request(PICC_REQIDL)
+        if (kortStatus != 0) {
+            if (kontroller) serial.writeLine("RFID: ingen respons før skriving")
+            return 0
         }
 
-        let id = getIDNum(uid)
-        TagSelect(uid)
-        status = Authent(PICC_AUTHENT1A, 11, Key, uid)
-        ReadRFID(11)
+        let [idStatus, kortUID] = AvoidColl()
+        if (idStatus != 0) {
+            if (kontroller) serial.writeLine("RFID: kunne ikke hente kort-ID")
+            return 0
+        }
 
-        if (status == 0) {
-            let data: NumberFormat.UInt8LE[] = []
-            for (let i = 0; i < txt.length; i++) {
-                data.push(txt.charCodeAt(i))
-            }
+        let kortID = getIDNum(kortUID)
+        let kortValgt = TagSelect(kortUID)
+        if (kontroller && kortValgt == 0) {
+            serial.writeLine("RFID: kunne ikke velge brikken")
+            return 0
+        }
 
-            for (let j = txt.length; j < 48; j++) {
-                data.push(32)
-            }
+        if (Authent(PICC_AUTHENT1A, 11, Key, kortUID) != 0) {
+            Crypto1Stop()
+            if (kontroller) serial.writeLine("RFID: tilgang til sektor 2 avvist")
+            return kontroller ? 0 : kortID
+        }
 
-            let b = 0
-            for (let BlockNum2 of BlockAdr) {
-                WriteRFID(BlockNum2, data.slice((b * 16), ((b + 1) * 16)))
-                b++
+        let data: number[] = []
+        for (let i = 0; i < txt.length; i++) {
+            data.push(txt.charCodeAt(i))
+        }
+        for (let i = txt.length; i < 48; i++) {
+            data.push(32)
+        }
+
+        for (let i = 0; i < BlockAdr.length; i++) {
+            let blokk = BlockAdr[i]
+            if (!WriteRFID(blokk, data.slice(i * 16, (i + 1) * 16)) && kontroller) {
+                serial.writeLine("RFID: skrivefeil på blokk " + blokk)
+                Crypto1Stop()
+                return 0
             }
         }
 
         Crypto1Stop()
-        serial.writeLine("Written to Card")
-        return id
+        return kortID
     }
 
 
@@ -179,7 +195,7 @@ namespace RFID_RC522 {
 
     function AntennaON() {
         temp = SPI_Read(TxControlReg)
-        if (~(temp & 0x03)) {
+        if ((temp & 0x03) != 0x03) {
             SetBits(TxControlReg, 0x03)
         }
     }
@@ -229,6 +245,7 @@ namespace RFID_RC522 {
         }
         if ((SPI_Read(Status2Reg) & 0x08) == 0) {
             serial.writeLine("AUTH ERROR2!")
+            return 2
         }
         return status
     }
@@ -270,7 +287,7 @@ namespace RFID_RC522 {
         while (true) {
             n = SPI_Read(ComIrqReg)
             p--
-            if (~(p != 0 && ~(n & 0x01) && ~(n & waitIRQ))) {
+            if (p == 0 || (n & 0x01) != 0 || (n & waitIRQ) != 0) {
                 break
             }
         }
@@ -353,37 +370,23 @@ namespace RFID_RC522 {
         return DataOut
     }
 
-    function WriteRFID(blockAdr: number, writeData: number[]) {
-        let buff: number[] = []
-        let crc: number[] = []
+    function WriteRFID(blockAdr: number, writeData: number[]): boolean {
+        let kommando = [0xA0, blockAdr]
+        let crc = CRC_Calculation(kommando)
+        kommando.push(crc[0])
+        kommando.push(crc[1])
 
-        buff.push(0xA0)
-        buff.push(blockAdr)
-        crc = CRC_Calculation(buff)
-        buff.push(crc[0])
-        buff.push(crc[1])
-        let [status, returnData, returnLen] = MFRC522_ToCard(PCD_TRANSCEIVE, buff)
-        if ((status != 0) || (returnLen != 4) || ((returnData[0] & 0x0F) != 0x0A)) {
-            status = 2
-            serial.writeLine("ERROR")
+        let [kommandoStatus, kommandoSvar, kommandoBits] = MFRC522_ToCard(PCD_TRANSCEIVE, kommando)
+        if (kommandoStatus != 0 || kommandoBits != 4 || (kommandoSvar[0] & 0x0F) != 0x0A) {
+            return false
         }
 
-        if (status == 0) {
-            let buff2: number[] = []
-            for (let w = 0; w < 16; w++) {
-                buff2.push(writeData[w])
-            }
-            crc = CRC_Calculation(buff2)
-            buff2.push(crc[0])
-            buff2.push(crc[1])
-            let [status, returnData, returnLen] = MFRC522_ToCard(PCD_TRANSCEIVE, buff2)
-            if ((status != 0) || (returnLen != 4) || ((returnData[0] & 0x0F) != 0x0A)) {
-                serial.writeLine("Error while writing")
-            }
-            else {
-                serial.writeLine("Data written")
-            }
-        }
+        let data = writeData.slice(0, 16)
+        crc = CRC_Calculation(data)
+        data.push(crc[0])
+        data.push(crc[1])
+        let [dataStatus, dataSvar, dataBits] = MFRC522_ToCard(PCD_TRANSCEIVE, data)
+        return dataStatus == 0 && dataBits == 4 && (dataSvar[0] & 0x0F) == 0x0A
     }
 
     function getIDNum(uid: number[]) {
@@ -476,17 +479,37 @@ namespace RFID_RC522 {
             return false
         }
 
-        if (!writeToCard(tekst)) {
+        // Start med et nytt antennefelt etter at getID() har funnet brikken.
+        startAntennefeltPaNytt()
+        let kortID = writeToCard(tekst, true)
+        if (kortID == 0) {
             return false
         }
 
-        // Start en ny lesing med brikken fortsatt på leseren.
+        startAntennefeltPaNytt()
+        let tilbake = readFromCard(kortID) || ""
+        let forventet = tekst
+        while (forventet.length < 48) {
+            forventet += " "
+        }
+        if (tilbake.length != 48) {
+            serial.writeLine("RFID: ufullstendig tilbakelesing (" + tilbake.length + " av 48 tegn)")
+            return false
+        }
+        if (tilbake != forventet) {
+            serial.writeLine("RFID: teksten som ble lest tilbake, er ulik")
+            return false
+        }
+
+        serial.writeLine("RFID: skriving bekreftet")
+        return true
+    }
+
+    function startAntennefeltPaNytt() {
         AntennaOff()
         basic.pause(50)
         AntennaON()
         basic.pause(50)
-
-        return read().trim() == tekst
     }
 
     /*
