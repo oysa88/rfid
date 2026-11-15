@@ -470,6 +470,25 @@ namespace RFID_RC522 {
         return
     }
 
+    //% block="skriv og sjekk RFID-kodeord %tekst"
+    export function skrivOgSjekk(tekst: string): boolean {
+        if (tekst.length == 0 || tekst.length > 48) {
+            return false
+        }
+
+        if (!writeToCard(tekst)) {
+            return false
+        }
+
+        // Start en ny lesing med brikken fortsatt på leseren.
+        AntennaOff()
+        basic.pause(50)
+        AntennaON()
+        basic.pause(50)
+
+        return read().trim() == tekst
+    }
+
     /*
      * TUrn off antenna
      */
