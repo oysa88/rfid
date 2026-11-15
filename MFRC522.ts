@@ -413,7 +413,7 @@ namespace RFID_RC522 {
     /*
      * Initial setup
      */
-    //% block="Initialize MFRC522 Module"
+    //% block="Initialiser RFID RC522"
     //% weight=100
     export function Init() {
         pins.spiPins(DigitalPin.P15, DigitalPin.P14, DigitalPin.P13)
@@ -435,7 +435,7 @@ namespace RFID_RC522 {
     /*
     * Function to read ID from card
     */
-    //% block="Read ID"
+    //% block="Les ID"
     //% weight=95
     export function getID(): number {
         return readID() || 0
@@ -444,7 +444,7 @@ namespace RFID_RC522 {
     /*
     * Function to read Data from card
     */
-    //% block="Read data"
+    //% block="Les data"
     //% weight=90
     export function read(): string {
         return readFromCard() || ""
@@ -454,7 +454,7 @@ namespace RFID_RC522 {
     /*
      * Function to write Data
      */
-    //% block="Write Data %text"
+    //% block="Skriv Data %text"
     //% text
     //% weight=85
     export function write(text: string) {
